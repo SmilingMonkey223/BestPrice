@@ -1,23 +1,17 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func # For SQL functions like ST_MakePoint, ST_DWithin
-from geoalchemy2.types import Geography # For casting geometry to geography
-from geoalchemy2.elements import WKTElement # To create geometry elements from WKT
-from typing import Optional, List # Ensure List is imported
+from sqlalchemy import func
+from geoalchemy2.types import Geography
+from geoalchemy2.elements import WKTElement # Keep if other functions use it
+from typing import Optional, List
 
 from . import models
 from . import schemas
 
+# --- Store CRUD Functions (existing) ---
 def get_store(db: Session, store_id: int) -> Optional[models.Store]:
-    """
-    Retrieves a store by its ID.
-    """
     return db.query(models.Store).filter(models.Store.id == store_id).first()
 
 def create_store(db: Session, store: schemas.StoreCreate) -> models.Store:
-    """
-    Creates a new store in the database.
-    The 'geom' field is populated from latitude and longitude.
-    """
     point_wkt = f"POINT({store.longitude} {store.latitude})"
     db_store = models.Store(
         name=store.name,
@@ -40,27 +34,51 @@ def get_stores_within_radius(
     skip: int = 0,
     limit: int = 100
 ) -> List[models.Store]:
-    """
-    Retrieves stores within a given radius (in kilometers) from a central point.
-    Uses PostGIS ST_DWithin with geography type for accurate distance calculation in meters.
-    """
     radius_meters = radius_km * 1000.0
-
-    # Create a geography point from the input lat/lon
-    # ST_MakePoint expects (longitude, latitude)
     center_point_geography = func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4326).cast(Geography)
-
-    # Query stores where the store's geom (cast to geography) is within radius_meters of the center point
     query = db.query(models.Store).filter(
         func.ST_DWithin(
-            models.Store.geom.cast(Geography), # Cast store's geometry to geography
+            models.Store.geom.cast(Geography),
             center_point_geography,
             radius_meters
         )
     )
-
     stores = query.offset(skip).limit(limit).all()
     return stores
+
+# --- Promotion CRUD Functions (new) ---
+
+def create_store_promotion(db: Session, promotion: schemas.PromotionCreate) -> models.Promotion:
+    """
+    Creates a new promotion associated with a store.
+    Assumes promotion.store_id is correctly set in the input schema.
+    """
+    db_promotion = models.Promotion(
+        store_id=promotion.store_id, # Taken from the schema
+        product_name=promotion.product_name,
+        sale_price=promotion.sale_price,
+        original_price=promotion.original_price,
+        valid_until=promotion.valid_until,
+        description=promotion.description,
+        image_url=promotion.image_url
+        # last_updated is handled by the database (server_default/onupdate)
+    )
+    db.add(db_promotion)
+    db.commit()
+    db.refresh(db_promotion)
+    return db_promotion
+
+def get_promotions_for_store(
+    db: Session,
+    store_id: int,
+    skip: int = 0,
+    limit: int = 100
+) -> List[models.Promotion]:
+    """
+    Retrieves a list of promotions for a specific store, with pagination.
+    """
+    return db.query(models.Promotion).filter(models.Promotion.store_id == store_id).offset(skip).limit(limit).all()
+
 
 # Placeholder for other CRUD functions to be added later
 # def get_stores(db: Session, skip: int = 0, limit: int = 100):
@@ -70,9 +88,6 @@ def get_stores_within_radius(
 #     pass
 
 # def delete_store(db: Session, store_id: int):
-#     pass
-
-# def create_promotion(db: Session, promotion: schemas.PromotionCreate):
 #     pass
 
 # def get_promotions_for_store(db: Session, store_id: int, skip: int = 0, limit: int = 100):

@@ -1,12 +1,12 @@
 from fastapi.testclient import TestClient
-from app.main import app # Main FastAPI application
-from app import schemas, models # To help construct Pydantic models and mock returns
-# from app import crud # For mocker.patch path if needed, already imported by app.main
-from unittest.mock import ANY # For db session argument matching
+from app.main import app
+from app import schemas, models
+from unittest.mock import ANY
+from datetime import date, datetime # For creating date/datetime objects for mock data
 
 client = TestClient(app)
 
-# --- Existing Geocoding Tests (Keep As Is) ---
+# --- Existing Geocoding Tests (Keep As Is, truncated for brevity) ---
 def test_geocode_address_success(mocker):
     mock_coords = (46.947975, 7.447447)
     # Path to fetch_coordinates_from_geo_admin is app.main because it's imported there
@@ -36,7 +36,7 @@ def test_geocode_address_missing_address_payload():
     assert data["detail"][0]["type"] == "missing"
     assert data["detail"][0]["loc"] == ["body", "address"]
 
-# --- Existing Store Endpoint Tests (Keep As Is) ---
+# --- Existing Store Endpoint Tests (Keep As Is, truncated for brevity) ---
 def test_create_new_store_success(mocker):
     store_payload = { "name": "Test Store Migros", "address": "123 Test St, Zurich", "latitude": 47.3769, "longitude": 8.5417, "chain_name": "Migros" }
     # Mocked return value from crud.create_store
@@ -87,8 +87,7 @@ def test_read_store_not_found(mocker):
     data = response.json()
     assert data["detail"] == f"Store with ID {store_id} not found"
 
-# --- New Geospatial Store Search Endpoint Tests ---
-
+# --- Existing Geospatial Store Search Endpoint Tests (Keep As Is, truncated for brevity) ---
 def test_read_stores_nearby_success(mocker):
     mock_stores_db = [
         models.Store(id=1, name="Nearby Store 1", address="1km Away", latitude=47.0, longitude=8.0, chain_name="Coop", geom="POINT(8.0 47.0)"),
@@ -115,44 +114,155 @@ def test_read_stores_nearby_success(mocker):
     )
 
 def test_read_stores_nearby_missing_manda_params():
-    # Missing latitude
     response_no_lat = client.get("/api/v1/stores", params={"longitude": 8.0, "radius_km": 5})
     assert response_no_lat.status_code == 422
-
-    # Missing longitude
     response_no_lon = client.get("/api/v1/stores", params={"latitude": 47.0, "radius_km": 5})
     assert response_no_lon.status_code == 422
 
 def test_read_stores_nearby_invalid_radius():
-    # Radius too small (gt=0 validation)
     response_small_radius = client.get("/api/v1/stores", params={"latitude": 47.0, "longitude": 8.0, "radius_km": 0})
     assert response_small_radius.status_code == 422
-
-    # Radius too large (le=50 validation)
     response_large_radius = client.get("/api/v1/stores", params={"latitude": 47.0, "longitude": 8.0, "radius_km": 100})
     assert response_large_radius.status_code == 422
 
 def test_read_stores_nearby_invalid_pagination():
-    # Skip less than 0
     response_invalid_skip = client.get("/api/v1/stores", params={"latitude": 47.0, "longitude": 8.0, "radius_km": 5, "skip": -1})
     assert response_invalid_skip.status_code == 422
-
-    # Limit less than 1
     response_invalid_limit_small = client.get("/api/v1/stores", params={"latitude": 47.0, "longitude": 8.0, "radius_km": 5, "limit": 0})
     assert response_invalid_limit_small.status_code == 422
-
-    # Limit greater than 200
     response_invalid_limit_large = client.get("/api/v1/stores", params={"latitude": 47.0, "longitude": 8.0, "radius_km": 5, "limit": 201})
     assert response_invalid_limit_large.status_code == 422
 
-
 def test_read_stores_nearby_empty_result(mocker):
-    mock_crud_get_stores_nearby = mocker.patch('app.crud.get_stores_within_radius', return_value=[]) # Return empty list
-
-    params = {"latitude": 47.0, "longitude": 8.0, "radius_km": 1} # A query that might yield no results
+    mock_crud_get_stores_nearby = mocker.patch('app.crud.get_stores_within_radius', return_value=[])
+    params = {"latitude": 47.0, "longitude": 8.0, "radius_km": 1}
     response = client.get("/api/v1/stores", params=params)
+    assert response.status_code == 200
+    assert response.json() == []
+    mock_crud_get_stores_nearby.assert_called_once()
 
+
+# --- New Promotion Endpoint Tests ---
+
+def test_create_promotion_for_store_success(mocker):
+    store_id = 1
+    promotion_payload = {
+        "store_id": store_id, # Matches path store_id
+        "product_name": "Super Sale Item",
+        "sale_price": 5.00,
+        "original_price": 10.00,
+        "valid_until": date(2024, 12, 31).isoformat(), # Ensure correct format for JSON
+        "description": "A super item!",
+        "image_url": "http://example.com/image.jpg"
+    }
+
+    mock_store_db = models.Store(id=store_id, name="Test Store", address="Addr", latitude=0, longitude=0, geom="POINT(0 0)")
+    mocker.patch('app.crud.get_store', return_value=mock_store_db)
+
+    # Use a dictionary for the attributes that PromotionCreate expects, then pass to model
+    created_promo_data_for_model = {
+        "store_id": promotion_payload["store_id"],
+        "product_name": promotion_payload["product_name"],
+        "sale_price": promotion_payload["sale_price"],
+        "original_price": promotion_payload["original_price"],
+        "valid_until": date(2024, 12, 31), # date object for model
+        "description": promotion_payload["description"],
+        "image_url": promotion_payload["image_url"]
+    }
+    mock_created_promo_db = models.Promotion(
+        id=101,
+        **created_promo_data_for_model,
+        last_updated=datetime.utcnow()
+    )
+    mock_crud_create_promo = mocker.patch('app.crud.create_store_promotion', return_value=mock_created_promo_db)
+
+    response = client.post(f"/api/v1/stores/{store_id}/promotions", json=promotion_payload)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["product_name"] == promotion_payload["product_name"]
+    assert data["id"] == mock_created_promo_db.id
+    assert data["store_id"] == store_id
+
+    # Check that crud.create_store_promotion was called with a schemas.PromotionCreate object
+    called_args, called_kwargs = mock_crud_create_promo.call_args
+    assert isinstance(called_kwargs['promotion'], schemas.PromotionCreate)
+    assert called_kwargs['promotion'].product_name == promotion_payload["product_name"]
+    assert called_kwargs['promotion'].store_id == store_id
+
+def test_create_promotion_for_store_store_not_found(mocker):
+    store_id = 99 # Non-existent store
+    mocker.patch('app.crud.get_store', return_value=None) # Simulate store not found
+    promotion_payload = {"store_id": store_id, "product_name": "Fail Item", "sale_price": 1.00, "valid_until": date(2024,12,31).isoformat()}
+
+    response = client.post(f"/api/v1/stores/{store_id}/promotions", json=promotion_payload)
+    assert response.status_code == 404
+
+def test_create_promotion_for_store_id_mismatch(mocker):
+    path_store_id = 1
+    payload_store_id = 2 # Mismatch!
+
+    mock_store_db = models.Store(id=path_store_id, name="Test Store", address="Addr", latitude=0, longitude=0, geom="POINT(0 0)")
+    mocker.patch('app.crud.get_store', return_value=mock_store_db)
+
+    promotion_payload = {"store_id": payload_store_id, "product_name": "Mismatch Item", "sale_price": 1.00, "valid_until": date(2024,12,31).isoformat()}
+    response = client.post(f"/api/v1/stores/{path_store_id}/promotions", json=promotion_payload)
+    assert response.status_code == 400 # Bad Request
+
+def test_create_promotion_for_store_invalid_payload(mocker):
+    store_id = 1
+    mock_store_db = models.Store(id=store_id, name="Test Store", address="Addr", latitude=0, longitude=0, geom="POINT(0 0)")
+    mocker.patch('app.crud.get_store', return_value=mock_store_db)
+
+    # product_name missing, sale_price is not a float, store_id is okay.
+    invalid_payload = {"store_id": store_id, "sale_price": "not-a-price", "valid_until": date(2024,12,31).isoformat()}
+    response = client.post(f"/api/v1/stores/{store_id}/promotions", json=invalid_payload)
+    assert response.status_code == 422
+
+
+def test_read_promotions_for_store_success(mocker):
+    store_id = 1
+    mock_store_db = models.Store(id=store_id, name="Test Store", address="Addr", latitude=0, longitude=0, geom="POINT(0 0)")
+    mocker.patch('app.crud.get_store', return_value=mock_store_db)
+
+    mock_promotions_db = [
+        models.Promotion(id=1, store_id=store_id, product_name="Promo 1", sale_price=10.0, last_updated=datetime.utcnow(), valid_until=date(2024,12,31)),
+        models.Promotion(id=2, store_id=store_id, product_name="Promo 2", sale_price=20.0, last_updated=datetime.utcnow(), valid_until=date(2024,12,31))
+    ]
+    mock_crud_get_promos = mocker.patch('app.crud.get_promotions_for_store', return_value=mock_promotions_db)
+
+    response = client.get(f"/api/v1/stores/{store_id}/promotions", params={"skip": 0, "limit": 10})
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 0
-    mock_crud_get_stores_nearby.assert_called_once()
+    assert len(data) == len(mock_promotions_db)
+    assert data[0]["product_name"] == mock_promotions_db[0].product_name
+
+    mock_crud_get_promos.assert_called_once_with(db=ANY, store_id=store_id, skip=0, limit=10)
+
+def test_read_promotions_for_store_no_promotions(mocker):
+    store_id = 1
+    mock_store_db = models.Store(id=store_id, name="Test Store", address="Addr", latitude=0, longitude=0, geom="POINT(0 0)")
+    mocker.patch('app.crud.get_store', return_value=mock_store_db)
+    mocker.patch('app.crud.get_promotions_for_store', return_value=[]) # Empty list
+
+    response = client.get(f"/api/v1/stores/{store_id}/promotions")
+    assert response.status_code == 200
+    assert response.json() == []
+
+def test_read_promotions_for_store_store_not_found(mocker):
+    store_id = 99 # Non-existent store
+    mocker.patch('app.crud.get_store', return_value=None) # Simulate store not found
+
+    response = client.get(f"/api/v1/stores/{store_id}/promotions")
+    assert response.status_code == 404
+
+def test_read_promotions_for_store_invalid_pagination(mocker):
+    store_id = 1
+    mock_store_db = models.Store(id=store_id, name="Test Store", address="Addr", latitude=0, longitude=0, geom="POINT(0 0)")
+    mocker.patch('app.crud.get_store', return_value=mock_store_db) # Store exists
+
+    response_invalid_skip = client.get(f"/api/v1/stores/{store_id}/promotions", params={"skip": -1})
+    assert response_invalid_skip.status_code == 422
+
+    response_invalid_limit = client.get(f"/api/v1/stores/{store_id}/promotions", params={"limit": 0})
+    assert response_invalid_limit.status_code == 422
