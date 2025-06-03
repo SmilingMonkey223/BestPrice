@@ -1,36 +1,40 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 from datetime import date, datetime
 
-# --- Promotion Schemas ---
+# --- Geocoding Schemas ---
+class AddressRequest(BaseModel):
+    address: str
 
+class GeocodeResponse(BaseModel):
+    latitude: float
+    longitude: float
+
+# --- Promotion Schemas ---
 class PromotionBase(BaseModel):
     product_name: str
-    sale_price: float # Using float for simplicity, could use Decimal with a custom type
+    sale_price: float
     original_price: Optional[float] = None
     valid_until: Optional[date] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
 
 class PromotionCreate(PromotionBase):
-    store_id: int # Required when creating a promotion
+    store_id: int
 
 class PromotionUpdate(PromotionBase):
-    # All fields are optional for update
     product_name: Optional[str] = None
     sale_price: Optional[float] = None
-    store_id: Optional[int] = None # Allow moving promotion to another store? Or disallow.
+    store_id: Optional[int] = None
 
 class PromotionRead(PromotionBase):
-    id: int # PromotionID
+    id: int
     store_id: int
     last_updated: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Store Schemas ---
-
 class StoreBase(BaseModel):
     name: str
     address: str
@@ -39,10 +43,9 @@ class StoreBase(BaseModel):
     chain_name: Optional[str] = None
 
 class StoreCreate(StoreBase):
-    pass # No extra fields needed for creation beyond StoreBase
+    pass
 
 class StoreUpdate(StoreBase):
-    # All fields are optional for update
     name: Optional[str] = None
     address: Optional[str] = None
     latitude: Optional[float] = None
@@ -50,19 +53,7 @@ class StoreUpdate(StoreBase):
     chain_name: Optional[str] = None
 
 class StoreRead(StoreBase):
-    id: int # StoreID
-    # When reading a store, we might want to include its promotions
+    id: int
     promotions: List[PromotionRead] = []
 
-    class Config:
-        orm_mode = True
-
-# Schema for the geocode endpoint (already defined in main.py, but good to have all schemas here)
-# This is just for reference if we decide to centralize all schemas.
-# For now, GeocodeResponse can remain in main.py or be moved here.
-# class GeocodeResponse(BaseModel):
-#     latitude: float
-#     longitude: float
-
-# class AddressRequest(BaseModel):
-#     address: str
+    model_config = ConfigDict(from_attributes=True)
