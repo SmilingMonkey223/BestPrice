@@ -4,3 +4,6 @@ pydantic
 pytest
 httpx
 pytest-mock
+SQLAlchemy
+psycopg2-binary
+GeoAlchemy2
